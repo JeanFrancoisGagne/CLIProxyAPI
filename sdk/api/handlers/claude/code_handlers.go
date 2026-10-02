@@ -19,6 +19,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	claudemodels "github.com/router-for-me/CLIProxyAPI/v8/internal/client/claude/models"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/clienterror"
 	. "github.com/router-for-me/CLIProxyAPI/v8/internal/constant"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
@@ -326,8 +327,9 @@ func (h *ClaudeCodeAPIHandler) forwardClaudeStream(c *gin.Context, flusher http.
 }
 
 type claudeErrorDetail struct {
-	Type    string `json:"type"`
-	Message string `json:"message"`
+	Type    string          `json:"type"`
+	Message string          `json:"message"`
+	Details json.RawMessage `json:"details,omitempty"`
 }
 
 type claudeErrorResponse struct {
@@ -350,11 +352,29 @@ func (h *ClaudeCodeAPIHandler) toClaudeError(msg *interfaces.ErrorMessage) claud
 		}
 	}
 	errType, message := claudeErrorDetailFromText(status, errText)
+	var details json.RawMessage
+	for _, path := range []string{"error.details", "details"} {
+		if value := gjson.Get(errText, path); value.IsObject() {
+			// Claude Code uses error_code to replay full history after a lost thread.
+			// Keep the upstream object intact instead of reducing it to message text.
+			details = json.RawMessage(value.Raw)
+			break
+		}
+	}
+	if msg != nil && clienterror.IsClaudeThreadNotFound(status, msg.Error) && !gjson.GetBytes(details, "error_code").Exists() {
+		// Some upstreams omit details. Normalize only the recognized HTTP 404
+		// so native clients can recover without retrying an incomplete delta.
+		if len(details) == 0 {
+			details = json.RawMessage(`{}`)
+		}
+		details, _ = sjson.SetBytes(details, "error_code", "thread_not_found")
+	}
 	return claudeErrorResponse{
 		Type: "error",
 		Error: claudeErrorDetail{
 			Type:    errType,
 			Message: message,
+			Details: details,
 		},
 	}
 }

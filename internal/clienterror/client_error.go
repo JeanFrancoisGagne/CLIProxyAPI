@@ -97,6 +97,9 @@ func IsRequestFault(status int, err error) bool {
 	if hasModelNotFoundErrorBody(err) {
 		return false
 	}
+	if IsClaudeThreadNotFound(status, err) {
+		return true
+	}
 	if hasRequestFaultBody(err) {
 		return true
 	}
@@ -112,6 +115,36 @@ func IsRequestFault(status int, err error) bool {
 	default:
 		return false
 	}
+}
+
+// IsClaudeThreadNotFound identifies the 404 that asks clients to replay history.
+// This fault belongs to the conversation; rotating credentials would cool the pool.
+func IsClaudeThreadNotFound(status int, err error) bool {
+	if status != http.StatusNotFound || err == nil || hasModelNotFoundErrorBody(err) {
+		return false
+	}
+	body := strings.TrimSpace(err.Error())
+	// Some upstream responses omit details.error_code or contain only this text.
+	const messagePrefix = "No thread state was found for the requested `previous_message_id`."
+	if !json.Valid([]byte(body)) {
+		return strings.HasPrefix(body, messagePrefix)
+	}
+	root := gjson.Parse(body)
+	for _, path := range []string{"error", "response.error", "body.error", ""} {
+		node := root
+		if path != "" {
+			node = root.Get(path)
+		}
+		for _, codePath := range []string{"code", "details.error_code"} {
+			if strings.EqualFold(strings.TrimSpace(node.Get(codePath).String()), "thread_not_found") {
+				return true
+			}
+		}
+		if node.Get("type").String() == "not_found_error" && strings.HasPrefix(node.Get("message").String(), messagePrefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // IsItemNotPersisted matches the upstream 404 raised when a request references a

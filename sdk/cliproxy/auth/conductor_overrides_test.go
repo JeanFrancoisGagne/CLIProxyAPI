@@ -1480,6 +1480,18 @@ func TestManager_RequestScopedErrorStopsCredentialFallbackWithoutSuspendingAuth(
 		HTTPStatus: http.StatusNotFound,
 		Message:    requestScopedNotFoundMessage,
 	}
+	threadNotFoundErr := &Error{
+		HTTPStatus: http.StatusNotFound,
+		Message:    `{"type":"error","error":{"type":"not_found_error","message":"No thread state was found for the requested previous_message_id.","details":{"error_code":"thread_not_found"}}}`,
+	}
+	messageOnlyThreadErr := &Error{
+		HTTPStatus: http.StatusNotFound,
+		Message:    "{\"type\":\"error\",\"error\":{\"type\":\"not_found_error\",\"message\":\"No thread state was found for the requested `previous_message_id`.\"}}",
+	}
+	plainThreadErr := &Error{
+		HTTPStatus: http.StatusNotFound,
+		Message:    "No thread state was found for the requested `previous_message_id`. Replay the full conversation with thread type create.",
+	}
 	tests := []struct {
 		name               string
 		provider           string
@@ -1488,6 +1500,15 @@ func TestManager_RequestScopedErrorStopsCredentialFallbackWithoutSuspendingAuth(
 		err                error
 		wantStatus         int
 	}{
+		{name: "non-streaming Claude thread not found", provider: "claude", err: threadNotFoundErr, wantStatus: http.StatusNotFound},
+		{name: "streaming Claude thread not found", provider: "claude", stream: true, err: threadNotFoundErr, wantStatus: http.StatusNotFound},
+		{name: "streaming Claude thread not found after payload", provider: "claude", stream: true, streamAfterPayload: true, err: threadNotFoundErr, wantStatus: http.StatusNotFound},
+		{name: "non-streaming Claude thread message only", provider: "claude", err: messageOnlyThreadErr, wantStatus: http.StatusNotFound},
+		{name: "streaming Claude thread message only", provider: "claude", stream: true, err: messageOnlyThreadErr, wantStatus: http.StatusNotFound},
+		{name: "streaming Claude thread message only after payload", provider: "claude", stream: true, streamAfterPayload: true, err: messageOnlyThreadErr, wantStatus: http.StatusNotFound},
+		{name: "non-streaming Claude thread plain message", provider: "claude", err: plainThreadErr, wantStatus: http.StatusNotFound},
+		{name: "streaming Claude thread plain message", provider: "claude", stream: true, err: plainThreadErr, wantStatus: http.StatusNotFound},
+		{name: "streaming Claude thread plain message after payload", provider: "claude", stream: true, streamAfterPayload: true, err: plainThreadErr, wantStatus: http.StatusNotFound},
 		{name: "non-streaming incomplete", err: incompleteErr, wantStatus: http.StatusRequestTimeout},
 		{name: "streaming incomplete", stream: true, err: incompleteErr, wantStatus: http.StatusRequestTimeout},
 		{name: "streaming codex websocket message too big", provider: "codex", stream: true, err: messageTooBigErr, wantStatus: http.StatusRequestEntityTooLarge},
@@ -1532,6 +1553,9 @@ func TestManager_RequestScopedErrorStopsCredentialFallbackWithoutSuspendingAuth(
 			m.RegisterExecutor(executor)
 
 			model := "gpt-5.5"
+			if provider == "claude" {
+				model = "claude-opus-5-5"
+			}
 			badAuth := &Auth{ID: "aa-bad-auth", Provider: provider}
 			goodAuth := &Auth{ID: "bb-good-auth", Provider: provider}
 
@@ -1603,6 +1627,43 @@ func TestManager_RequestScopedErrorStopsCredentialFallbackWithoutSuspendingAuth(
 			}
 			if updatedGood.Failed != 0 {
 				t.Fatalf("fallback auth failed count = %d, want 0", updatedGood.Failed)
+			}
+			if provider == "claude" {
+				if errExecute.Error() != tc.err.Error() {
+					t.Fatalf("original thread recovery error changed: %v", errExecute)
+				}
+				if updatedGood.Unavailable || !updatedGood.NextRetryAfter.IsZero() || len(updatedGood.ModelStates) != 0 {
+					t.Fatal("thread error changed the fallback credential availability")
+				}
+				// A client can replay full history immediately on the same credential.
+				// Pinning the replay proves selection does not silently use another account.
+				executor.mu.Lock()
+				delete(executor.executeErrors, badAuth.ID)
+				delete(executor.streamFirstErrors, badAuth.ID)
+				delete(executor.streamTailErrors, badAuth.ID)
+				executor.mu.Unlock()
+				replayOpts := cliproxyexecutor.Options{Stream: tc.stream, Metadata: map[string]any{cliproxyexecutor.PinnedAuthMetadataKey: badAuth.ID}}
+				replayReq := cliproxyexecutor.Request{Model: model, Payload: []byte(`{"thread":{"type":"create"},"messages":[{"role":"user","content":"replay"}]}`)}
+				if tc.stream {
+					result, err := m.ExecuteStream(context.Background(), []string{provider}, replayReq, replayOpts)
+					if err != nil {
+						t.Fatalf("replay on original credential: %v", err)
+					}
+					for chunk := range result.Chunks {
+						if chunk.Err != nil {
+							t.Fatalf("replay stream on original credential: %v", chunk.Err)
+						}
+					}
+					calls = executor.StreamCalls()
+				} else {
+					if _, err := m.Execute(context.Background(), []string{provider}, replayReq, replayOpts); err != nil {
+						t.Fatalf("replay on original credential: %v", err)
+					}
+					calls = executor.ExecuteCalls()
+				}
+				if len(calls) != 2 || calls[0] != badAuth.ID || calls[1] != badAuth.ID {
+					t.Fatalf("recovery calls = %v, want twice on original credential", calls)
+				}
 			}
 		})
 	}
