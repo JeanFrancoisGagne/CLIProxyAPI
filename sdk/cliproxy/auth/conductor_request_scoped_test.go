@@ -245,26 +245,47 @@ func TestManager_ModelNotFound404StillRotatesAndCoolsDown(t *testing.T) {
 	assertNoRequestCooldown(t, m, calls[2], model)
 }
 
-// Second guard: a 404 that nothing classifies, answered by two credentials in a
-// row for one request, is a property of the request. Stop after the second and
-// cool neither credential.
-func TestManager_Repeated404AcrossCredentialsStopsRotationWithoutCooldown(t *testing.T) {
-	for _, stream := range []bool{false, true} {
-		t.Run(fmt.Sprintf("stream=%t", stream), func(t *testing.T) {
-			model := fmt.Sprintf("claude-repeated-404-stream-%t", stream)
-			notFound := upstreamStatusErr{code: http.StatusNotFound, body: genericNotFoundBody}
-			m, executor, ids := newRequestScopedTestManager(t, model, 6, alwaysFail(notFound))
+// A 404 that names no conversation state belongs to the credential, even when
+// two credentials in a row answer it: an account without the model, or a base
+// URL with no such route. Rotation must reach the credential that serves the
+// model, and the two that answered 404 cool down so later requests skip them.
+func TestManager_Two404CredentialsThenSuccessRotatesAndCoolsBoth(t *testing.T) {
+	cases := []struct {
+		name string
+		body func(model string) string
+	}{
+		{"anthropic-model", func(model string) string {
+			return `{"type":"error","error":{"type":"not_found_error","message":"model: ` + model + `"},"request_id":"req_x"}`
+		}},
+		{"gemini-model", func(model string) string {
+			return `{"error":{"code":404,"message":"models/` + model + ` is not found for API version v1beta, or is not supported for generateContent.","status":"NOT_FOUND"}}`
+		}},
+		{"plain-text", func(string) string { return "404 page not found" }},
+	}
+	for _, tc := range cases {
+		for _, stream := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/stream=%t", tc.name, stream), func(t *testing.T) {
+				model := fmt.Sprintf("claude-two-404-%s-stream-%t", tc.name, stream)
+				notFound := upstreamStatusErr{code: http.StatusNotFound, body: tc.body(model)}
+				m, executor, _ := newRequestScopedTestManager(t, model, 3, func(call int) error {
+					if call < 2 {
+						return notFound
+					}
+					return nil
+				})
 
-			err := executeOrStream(m, stream, model)
-
-			assertNotFoundReturned(t, err, "Not Found")
-			if calls := executor.Calls(); len(calls) != 2 {
-				t.Errorf("upstream calls = %v (%d), want exactly 2", calls, len(calls))
-			}
-			for _, id := range ids {
-				assertNoRequestCooldown(t, m, id, model)
-			}
-		})
+				if err := executeOrStream(m, stream, model); err != nil {
+					t.Fatalf("error = %v, want success on the third credential", err)
+				}
+				calls := executor.Calls()
+				if len(calls) != 3 {
+					t.Fatalf("upstream calls = %v, want 3 (rotate past both 404 credentials)", calls)
+				}
+				assertRequestModelCooldown(t, m, calls[0], model)
+				assertRequestModelCooldown(t, m, calls[1], model)
+				assertNoRequestCooldown(t, m, calls[2], model)
+			})
+		}
 	}
 }
 
