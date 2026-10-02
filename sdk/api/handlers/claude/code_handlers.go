@@ -328,6 +328,9 @@ func (h *ClaudeCodeAPIHandler) forwardClaudeStream(c *gin.Context, flusher http.
 type claudeErrorDetail struct {
 	Type    string `json:"type"`
 	Message string `json:"message"`
+	// Details carries the upstream error.details object verbatim. Claude Code
+	// reads details.error_code (thread_not_found) to decide how to recover.
+	Details json.RawMessage `json:"details,omitempty"`
 }
 
 type claudeErrorResponse struct {
@@ -350,13 +353,11 @@ func (h *ClaudeCodeAPIHandler) toClaudeError(msg *interfaces.ErrorMessage) claud
 		}
 	}
 	errType, message := claudeErrorDetailFromText(status, errText)
-	return claudeErrorResponse{
-		Type: "error",
-		Error: claudeErrorDetail{
-			Type:    errType,
-			Message: message,
-		},
+	detail := claudeErrorDetail{Type: errType, Message: message}
+	if details := gjson.Get(strings.TrimSpace(errText), "error.details"); details.IsObject() {
+		detail.Details = json.RawMessage(details.Raw)
 	}
+	return claudeErrorResponse{Type: "error", Error: detail}
 }
 
 func (h *ClaudeCodeAPIHandler) WriteErrorResponse(c *gin.Context, msg *interfaces.ErrorMessage) {

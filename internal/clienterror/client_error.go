@@ -100,7 +100,7 @@ func IsRequestFault(status int, err error) bool {
 	if hasRequestFaultBody(err) {
 		return true
 	}
-	if err != nil && IsItemNotPersisted(err.Error()) {
+	if err != nil && IsMissingUpstreamState(err.Error()) {
 		return true
 	}
 	switch status {
@@ -129,14 +129,57 @@ func IsItemNotPersisted(message string) bool {
 		strings.Contains(lower, "items are not persisted when `store` is set to false")
 }
 
+// missingUpstreamStateMarkers are the message fragments of a not-found error
+// about conversation state rather than about a model or route.
+var missingUpstreamStateMarkers = []string{
+	"previous_message_id",
+	"thread state",
+	"previous_response_id",
+	"not persisted",
+}
+
+// IsMissingUpstreamState reports whether an upstream failure says the request
+// references conversation state the upstream does not hold: an Anthropic thread
+// (previous_message_id, details.error_code thread_not_found), an OpenAI response
+// (previous_response_id), or a response item that was never stored.
+//
+// That state lives on the upstream account that created it, and it expires, so
+// no other credential can serve the request and the credential is not at fault.
+// Only the client can recover, by rebuilding the request (Anthropic says so in
+// the error: replay the conversation with thread create). An explicit
+// model_not_found body is excluded: that one is a credential-model mismatch.
+func IsMissingUpstreamState(message string) bool {
+	if IsItemNotPersisted(message) {
+		return true
+	}
+	body := strings.TrimSpace(message)
+	if body == "" || !json.Valid([]byte(body)) || isModelNotFoundBody(body) {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(gjson.Get(body, "error.details.error_code").String()), "thread_not_found") {
+		return true
+	}
+	if !strings.EqualFold(strings.TrimSpace(gjson.Get(body, "error.type").String()), "not_found_error") {
+		return false
+	}
+	lower := strings.ToLower(gjson.Get(body, "error.message").String())
+	for _, marker := range missingUpstreamStateMarkers {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func hasModelNotFoundErrorBody(err error) bool {
 	if err == nil {
 		return false
 	}
 	body := strings.TrimSpace(err.Error())
-	if body == "" || !json.Valid([]byte(body)) {
-		return false
-	}
+	return body != "" && json.Valid([]byte(body)) && isModelNotFoundBody(body)
+}
+
+func isModelNotFoundBody(body string) bool {
 	for _, path := range []string{"error.code", "code", "response.error.code", "body.error.code"} {
 		code := strings.ToLower(strings.TrimSpace(gjson.Get(body, path).String()))
 		if code == "model_not_found" || code == "model_not_found_error" {

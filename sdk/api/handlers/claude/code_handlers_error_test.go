@@ -119,3 +119,37 @@ func TestPendingClaudeStreamErrorUsesBufferedError(t *testing.T) {
 		t.Fatalf("pending error = %p, want %p", gotErr, wantErr)
 	}
 }
+
+// Claude Code decides how to recover from a 404 by its details.error_code: on
+// thread_not_found it replays the conversation with thread create. The proxy
+// rebuilds upstream errors into its own envelope, so it must carry details.
+func TestWriteClaudeErrorResponsePreservesThreadNotFoundDetails(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	handler := &ClaudeCodeAPIHandler{}
+	msg := &interfaces.ErrorMessage{
+		StatusCode: http.StatusNotFound,
+		Error:      errors.New(`{"type":"error","error":{"type":"not_found_error","message":"No thread state was found for the requested ` + "`previous_message_id`" + `.","details":{"error_code":"thread_not_found"}},"request_id":"req_011Cfde"}`),
+	}
+
+	handler.WriteErrorResponse(c, msg)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", recorder.Code)
+	}
+	body := recorder.Body.Bytes()
+	if got := gjson.GetBytes(body, "error.type").String(); got != "not_found_error" {
+		t.Errorf("error.type = %q, want not_found_error; body=%s", got, body)
+	}
+	if got := gjson.GetBytes(body, "error.details.error_code").String(); got != "thread_not_found" {
+		t.Errorf("error.details.error_code = %q, want thread_not_found; body=%s", got, body)
+	}
+
+	plain := httptest.NewRecorder()
+	plainCtx, _ := gin.CreateTestContext(plain)
+	handler.WriteErrorResponse(plainCtx, &interfaces.ErrorMessage{StatusCode: http.StatusBadRequest, Error: errors.New("bad request")})
+	if gjson.GetBytes(plain.Body.Bytes(), "error.details").Exists() {
+		t.Errorf("details present without upstream details: %s", plain.Body.Bytes())
+	}
+}

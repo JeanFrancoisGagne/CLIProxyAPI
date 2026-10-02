@@ -259,3 +259,84 @@ func TestIsClientCancellation(t *testing.T) {
 		})
 	}
 }
+
+// incidentThreadNotFoundBody is the verbatim 404 body Anthropic returned on
+// 2026-10-02 when a Claude Code thread's server-side state had expired. Only the
+// client can recover, by replaying the conversation with thread create.
+const incidentThreadNotFoundBody = `{"type":"error","error":{"type":"not_found_error","message":"No thread state was found for the requested ` + "`previous_message_id`" + `. Replay the full conversation with ` + "`thread: {\\\"type\\\": \\\"create\\\"}`" + ` to start a new Thread.","details":{"error_code":"thread_not_found"}},"request_id":"req_011Cfde"}`
+
+func TestIsRequestFaultMissingUpstreamConversationState(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "incident thread_not_found body", err: statusError{status: http.StatusNotFound, body: incidentThreadNotFoundBody}, want: true},
+		{
+			name: "thread_not_found error_code alone",
+			err:  statusError{status: http.StatusNotFound, body: `{"type":"error","error":{"type":"not_found_error","message":"Not found.","details":{"error_code":"thread_not_found"}}}`},
+			want: true,
+		},
+		{
+			name: "not_found_error naming previous_message_id",
+			err:  statusError{status: http.StatusNotFound, body: `{"type":"error","error":{"type":"not_found_error","message":"Unknown previous_message_id msg_01abc."}}`},
+			want: true,
+		},
+		{
+			name: "not_found_error naming thread state",
+			err:  statusError{status: http.StatusNotFound, body: `{"type":"error","error":{"type":"not_found_error","message":"Thread state has expired."}}`},
+			want: true,
+		},
+		{
+			name: "not_found_error naming previous_response_id",
+			err:  statusError{status: http.StatusNotFound, body: `{"error":{"type":"not_found_error","message":"No response found for previous_response_id resp_123."}}`},
+			want: true,
+		},
+		{
+			name: "anthropic model not found stays credential scoped",
+			err:  statusError{status: http.StatusNotFound, body: `{"type":"error","error":{"type":"not_found_error","message":"model: claude-missing-1"}}`},
+			want: false,
+		},
+		{
+			name: "model_not_found code stays credential scoped",
+			err:  statusError{status: http.StatusNotFound, body: `{"error":{"type":"not_found_error","code":"model_not_found","message":"No thread state for previous_message_id."}}`},
+			want: false,
+		},
+		{
+			name: "plain not found stays credential scoped",
+			err:  statusError{status: http.StatusNotFound, body: `{"type":"error","error":{"type":"not_found_error","message":"Not Found"}}`},
+			want: false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsRequestFault(http.StatusNotFound, tc.err); got != tc.want {
+				t.Fatalf("IsRequestFault(404, %s) = %t, want %t", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestIsMissingUpstreamState(t *testing.T) {
+	tests := []struct {
+		name    string
+		message string
+		want    bool
+	}{
+		{name: "incident thread_not_found body", message: incidentThreadNotFoundBody, want: true},
+		{name: "openai item not persisted plain text", message: "Item with id 'rs_1' not found. Items are not persisted when `store` is set to false. Try again with `store` set to true, or remove this item from your input.", want: true},
+		{name: "not_found_error naming not persisted", message: `{"error":{"type":"not_found_error","message":"Item rs_1 was not persisted."}}`, want: true},
+		{name: "model_not_found wins over a state marker", message: `{"error":{"type":"not_found_error","code":"model_not_found","message":"previous_message_id"}}`, want: false},
+		{name: "marker outside a not_found_error", message: `{"error":{"type":"invalid_request_error","message":"previous_message_id must be a string"}}`, want: false},
+		{name: "plain text thread mention", message: "No thread state was found", want: false},
+		{name: "generic not found", message: `{"type":"error","error":{"type":"not_found_error","message":"Not Found"}}`, want: false},
+		{name: "empty", message: "", want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsMissingUpstreamState(tc.message); got != tc.want {
+				t.Fatalf("IsMissingUpstreamState(%q) = %t, want %t", tc.message, got, tc.want)
+			}
+		})
+	}
+}
