@@ -1,0 +1,13 @@
+[Unit]
+Description=reset-pacer: point CLIProxyAPI at the account whose weekly limit resets first
+After=network-online.target
+
+[Service]
+Type=oneshot
+# secrets.env holds CLIPROXY_MGMT_KEY (or CPA_MGMT_KEY); reset-pacer reads either.
+# systemd reads plain KEY=value lines only.
+EnvironmentFile=%h/.cli-proxy-api/secrets.env
+Environment=CPA_BASE=http://100.95.181.77:8317
+ExecStart=%h/.local/bin/reset-pacer -once
+# A hung pass must not block the next timer tick for long.
+TimeoutStartSec=4min
