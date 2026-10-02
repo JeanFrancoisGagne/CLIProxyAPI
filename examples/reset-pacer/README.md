@@ -78,7 +78,7 @@ Settings:
 also sets `CPA_BASE`, that value wins over the one in the unit.
 
 The proxy treats a request from any address other than 127.0.0.1 or ::1 as
-remote, so calling it at `100.95.181.77` needs `remote-management.allow-remote: true`
+remote, so calling it at `100.95.181.77` needs `management.allow-remote: true` (config-version 8; older configs call it `remote-management.allow-remote`)
 in its config. If the dashboard already works from another machine, it is on.
 
 ## Reading the output

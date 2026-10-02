@@ -81,14 +81,34 @@ func TestRank(t *testing.T) {
 			reasons: map[string]string{"a": "no reset time so last"},
 		},
 		{
-			name: "failed usage fetch stays at 10 and the others still rank",
+			// One failed usage call must not reshuffle the pool between passes.
+			name: "failed usage fetch keeps a set priority and the others still rank",
 			creds: []Credential{
-				{Name: "a", Provider: "claude", Priority: 100, UsageError: "upstream 401: token expired"},
+				{Name: "a", Provider: "claude", Priority: 80, UsageError: "upstream 429: rate limited"},
 				claude("b", win(5, days(0.1)), win(50, days(1))),
 				claude("c", win(5, days(0.1)), win(50, days(2))),
 			},
-			want:    map[string]int{"a": 10, "b": 100, "c": 90},
+			want:    map[string]int{"a": 80, "b": 100, "c": 90},
+			reasons: map[string]string{"a": "priority kept"},
+		},
+		{
+			name: "failed usage fetch with no priority yet gets the fallback",
+			creds: []Credential{
+				{Name: "a", Provider: "claude", UsageError: "upstream 401: token expired"},
+				claude("b", nil, win(50, days(1))),
+			},
+			want:    map[string]int{"a": 10, "b": 100},
 			reasons: map[string]string{"a": "usage unknown: upstream 401"},
+		},
+		{
+			// Anthropic stamps resets_at to the sub-second, so accounts that reset
+			// in the same hour must still tie and fall through to weekly use.
+			name: "resets within the same hour tie and break on lower 7d use",
+			creds: []Credential{
+				claude("a", nil, win(50, t0.Add(24*time.Hour+5*time.Minute))),
+				claude("b", nil, win(20, t0.Add(24*time.Hour+40*time.Minute))),
+			},
+			want: map[string]int{"b": 100, "a": 90},
 		},
 		{
 			name: "equal resets break on lower 7d use, then name",

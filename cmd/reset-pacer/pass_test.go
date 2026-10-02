@@ -21,6 +21,7 @@ type fakeProxy struct {
 	key     string
 	files   []map[string]any
 	usage   map[string]apiCallResponse // by auth_index
+	slow    map[string]time.Duration   // api-call delay by auth_index
 	mu      sync.Mutex
 	calls   []apiCallRequest
 	patches []map[string]any
@@ -43,6 +44,14 @@ func (f *fakeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			f.t.Errorf("api-call body: %v", err)
 		}
 		f.calls = append(f.calls, req)
+		if d := f.slow[req.AuthIndex]; d > 0 {
+			f.mu.Unlock()
+			select {
+			case <-time.After(d):
+			case <-r.Context().Done():
+			}
+			f.mu.Lock()
+		}
 		resp, ok := f.usage[req.AuthIndex]
 		if !ok {
 			w.WriteHeader(http.StatusBadRequest)
@@ -136,7 +145,7 @@ func TestPassPatchesOnlyChangedPriorities(t *testing.T) {
 
 	report := out.String()
 	t.Logf("report:\n%s", report)
-	for _, s := range []string{"al***@example.com", "10 -> 100", "90 -> 90", "50 -> 50", "disabled, left alone", "upstream 429"} {
+	for _, s := range []string{"al***ce@example.com", "10 -> 100", "90 -> 90", "50 -> 50", "disabled, left alone", "upstream 429"} {
 		if !strings.Contains(report, s) {
 			t.Errorf("report lacks %q:\n%s", s, report)
 		}
@@ -207,14 +216,45 @@ func TestRunWithoutKeyExits2(t *testing.T) {
 
 func TestMaskAccount(t *testing.T) {
 	tests := []struct{ email, name, want string }{
-		{"jfgagne50@gmail.com", "x.json", "jf***@gmail.com"},
+		{"jfgagne50@gmail.com", "x.json", "jf***50@gmail.com"},
+		// Accounts that share a prefix must still print differently.
+		{"jf-research04@nera.software", "", "jf***04@nera.software"},
+		{"jf-research05@nera.software", "", "jf***05@nera.software"},
+		{"abcd@x.io", "", "ab***@x.io"},
 		{"ab@x.io", "", "a***@x.io"},
-		{"", "claude-jfgagne50@gmail.com.json", "cl***@gmail.com.json"},
+		{"", "claude-jfgagne50@gmail.com.json", "cl***50@gmail.com.json"},
 		{"", "codex-team.json", "codex-team.json"},
 	}
 	for _, tc := range tests {
 		if got := maskAccount(tc.email, tc.name); got != tc.want {
 			t.Errorf("maskAccount(%q, %q) = %q, want %q", tc.email, tc.name, got, tc.want)
 		}
+	}
+}
+
+func TestPassUsageCallDeadline(t *testing.T) {
+	fake := newFakeProxy(t)
+	fake.slow = map[string]time.Duration{"ia": 5 * time.Second}
+	srv := httptest.NewServer(fake)
+	defer srv.Close()
+
+	var out bytes.Buffer
+	p := newTestPacer(srv, "k", false, &out)
+	p.usageTimeout = 200 * time.Millisecond
+	start := time.Now()
+	if err := p.pass(context.Background()); err != nil {
+		t.Fatalf("pass: %v\n%s", err, out.String())
+	}
+	if el := time.Since(start); el > 3*time.Second {
+		t.Fatalf("pass took %v; one hung usage call must not stall the pass", el)
+	}
+	// a's usage call timed out, so a keeps its priority 90 and gets no PATCH.
+	for _, patch := range fake.patches {
+		if patch["name"] == "claude-a@example.com.json" {
+			t.Errorf("a was patched to %v after its usage call timed out", patch["priority"])
+		}
+	}
+	if !strings.Contains(out.String(), "priority kept") {
+		t.Errorf("report does not say a kept its priority:\n%s", out.String())
 	}
 }

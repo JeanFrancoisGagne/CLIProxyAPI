@@ -63,7 +63,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	p := &pacer{client: newMgmtClient(*base, key), out: stdout, dryRun: *dryRun, verbose: *verbose, now: time.Now}
+	// 20 s per usage call keeps one hung upstream from eating the systemd
+	// TimeoutStartSec budget for every credential behind it.
+	p := &pacer{client: newMgmtClient(*base, key), out: stdout, dryRun: *dryRun, verbose: *verbose, now: time.Now, usageTimeout: 20 * time.Second}
 	for {
 		err := p.pass(ctx)
 		if err != nil {
@@ -87,11 +89,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 }
 
 type pacer struct {
-	client  *mgmtClient
-	out     io.Writer
-	dryRun  bool
-	verbose bool
-	now     func() time.Time
+	client       *mgmtClient
+	out          io.Writer
+	dryRun       bool
+	verbose      bool
+	now          func() time.Time
+	usageTimeout time.Duration // deadline for one usage call; 0 means none
 }
 
 // line is one credential's row in the pass report.
@@ -189,6 +192,11 @@ func (p *pacer) fetchUsage(ctx context.Context, f authFile, now time.Time) (*Usa
 	if f.AuthIndex == "" {
 		return nil, errors.New("credential has no auth_index")
 	}
+	if p.usageTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, p.usageTimeout)
+		defer cancel()
+	}
 	if f.provider() == "claude" {
 		body, err := p.client.upstreamGet(ctx, f.AuthIndex, claudeUsageURL, claudeUsageHeaders())
 		if err != nil {
@@ -279,12 +287,17 @@ func maskEmail(s string) string {
 	if at < 0 {
 		return s
 	}
+	// Keep the last two characters too: accounts like jf-research04 and
+	// jf-research05 differ only at the end.
 	local := []rune(s[:at])
-	keep := min(2, len(local))
-	if len(local) <= 2 {
-		keep = min(1, len(local))
+	switch {
+	case len(local) > 4:
+		return string(local[:2]) + "***" + string(local[len(local)-2:]) + "@" + s[at+1:]
+	case len(local) > 2:
+		return string(local[:2]) + "***@" + s[at+1:]
+	default:
+		return string(local[:min(1, len(local))]) + "***@" + s[at+1:]
 	}
-	return string(local[:keep]) + "***@" + s[at+1:]
 }
 
 func envOr(name, fallback string) string {

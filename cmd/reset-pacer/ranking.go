@@ -74,6 +74,12 @@ func Rank(creds []Credential) []Decision {
 		}
 		if ok {
 			eligibleByProvider[c.Provider] = append(eligibleByProvider[c.Provider], i)
+		} else if c.Usage == nil && c.UsageError != "" && c.Priority != 0 {
+			// A failed usage call (a 429 from the usage endpoint, a timeout) says
+			// nothing about the account, so keep its rank instead of reshuffling
+			// the pool. A dead token is blocked by the proxy whatever its priority.
+			decisions[i].New = c.Priority
+			decisions[i].Reason = "usage fetch failed, priority kept: " + c.UsageError
 		}
 	}
 	for _, idx := range eligibleByProvider {
@@ -118,14 +124,16 @@ func eligibility(c Credential) (bool, string) {
 }
 
 // rankBefore orders two eligible credentials: a known weekly reset before an
-// unknown one, then the sooner reset, then the lower weekly use, then the name.
+// unknown one, then the sooner reset hour, then the lower weekly use, then the
+// name. Resets compare by hour because Anthropic stamps resets_at to the
+// sub-second, which would otherwise make every pair of resets unequal.
 func rankBefore(a, b Credential) bool {
 	ra, rb := weeklyReset(a), weeklyReset(b)
 	if ra.IsZero() != rb.IsZero() {
 		return !ra.IsZero()
 	}
-	if !ra.Equal(rb) {
-		return ra.Before(rb)
+	if ha, hb := ra.Truncate(time.Hour), rb.Truncate(time.Hour); !ha.Equal(hb) {
+		return ha.Before(hb)
 	}
 	if ua, ub := weeklyUsed(a), weeklyUsed(b); ua != ub {
 		return ua < ub
