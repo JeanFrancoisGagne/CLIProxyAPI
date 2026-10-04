@@ -3,6 +3,7 @@ package auth
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -29,10 +30,30 @@ type GrantCounts struct {
 	Blocked int `json:"blocked"`
 	// Disabled credentials were turned off by the operator.
 	Disabled int `json:"disabled"`
-	// InvalidGrantIDs lists the auth IDs counted in InvalidGrant, sorted.
+	// InvalidGrantIDs lists a grantLabel for each credential counted in
+	// InvalidGrant, sorted.
 	InvalidGrantIDs []string `json:"invalid_grant_ids"`
-	// BlockedIDs lists the auth IDs counted in Blocked, sorted.
+	// BlockedIDs lists a grantLabel for each credential counted in Blocked,
+	// sorted.
 	BlockedIDs []string `json:"blocked_ids"`
+}
+
+// authFileLabel matches the start of an OAuth file name such as
+// claude-773c1595-<email>.json: the provider and the 8 hex digits after it.
+var authFileLabel = regexp.MustCompile(`^([a-z][a-z0-9]*)-([0-9a-f]{8})-`)
+
+// grantLabel names a credential in the readiness body without its email.
+// Every client key holder can read that body, and an auth ID is the file
+// name, which ends in the account's email. An ID shaped like
+// claude-773c1595-<email>.json becomes claude-773c1595; any other ID becomes
+// the first 12 hex digits of its sha256.
+func grantLabel(id string) string {
+	base := id[strings.LastIndexAny(id, `/\`)+1:]
+	if m := authFileLabel.FindStringSubmatch(base); m != nil {
+		return m[1] + "-" + m[2]
+	}
+	sum := sha256.Sum256([]byte(id))
+	return hex.EncodeToString(sum[:])[:12]
 }
 
 func refreshTokenFingerprint(token string) string {
@@ -104,12 +125,12 @@ func (m *Manager) GrantReadiness(now time.Time, lead time.Duration) map[string]*
 			counts.Disabled++
 		case m.refreshTokenRejected(a):
 			counts.InvalidGrant++
-			counts.InvalidGrantIDs = append(counts.InvalidGrantIDs, a.ID)
+			counts.InvalidGrantIDs = append(counts.InvalidGrantIDs, grantLabel(a.ID))
 		case !a.HasValidAccessToken(horizon):
 			counts.Expiring++
 		case grantBlocked(a, horizon):
 			counts.Blocked++
-			counts.BlockedIDs = append(counts.BlockedIDs, a.ID)
+			counts.BlockedIDs = append(counts.BlockedIDs, grantLabel(a.ID))
 		default:
 			counts.Usable++
 		}

@@ -2,8 +2,11 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -69,7 +72,7 @@ func TestGrantReadinessInvalidGrantSticksUntilTokenChanges(t *testing.T) {
 	}
 
 	counts := m.GrantReadiness(now, 10*time.Minute)["claude"]
-	if counts.InvalidGrant != 1 || counts.Usable != 1 || !reflect.DeepEqual(counts.InvalidGrantIDs, []string{"claude-a"}) {
+	if counts.InvalidGrant != 1 || counts.Usable != 1 || !reflect.DeepEqual(counts.InvalidGrantIDs, []string{"d3cf2597d1b3"}) {
 		t.Fatalf("after invalid_grant: %+v", counts)
 	}
 
@@ -104,5 +107,48 @@ func TestGrantReadinessTransportErrorIsNotInvalidGrant(t *testing.T) {
 
 	if counts := m.GrantReadiness(now, 10*time.Minute)["claude"]; counts.InvalidGrant != 0 || counts.Usable != 1 {
 		t.Fatalf("transport error counted as a dead grant: %+v", counts)
+	}
+}
+
+// The readiness body lists dead and blocked grants to every client key
+// holder. An auth ID is the file name, which ends in the account's email, so
+// the lists carry only the provider and the 8 hex digits of the file name,
+// or a sha256 prefix for any other ID.
+func TestGrantReadinessLabelsCarryNoEmail(t *testing.T) {
+	now := time.Now()
+	executor := &unauthorizedRefreshExecutor{
+		id:         "claude",
+		refreshErr: errors.New(`token refresh failed with status 400: {"error": "invalid_grant"}`),
+	}
+	m := NewManager(nil, nil, nil)
+	m.RegisterExecutor(executor)
+	dead := "claude-773c1595-jf@example.com.json"
+	registerReadinessAuth(t, m, readinessAuth(dead, "claude", "rt-dead", now.Add(3*time.Hour)))
+	for _, id := range []string{"team/claude-d21ba20a-ops@example.com.json", "someone@example.com.json"} {
+		held := readinessAuth(id, "claude", "rt-"+id, now.Add(5*time.Hour))
+		held.Unavailable = true
+		held.Status = StatusError
+		held.LastError = &Error{Code: "unauthorized", Message: "token revoked", HTTPStatus: http.StatusUnauthorized}
+		registerReadinessAuth(t, m, held)
+	}
+	if _, err := m.ForceRefreshAuth(context.Background(), dead); err == nil {
+		t.Fatal("expected the refresh to fail")
+	}
+
+	got := m.GrantReadiness(now, 10*time.Minute)["claude"]
+	want := &GrantCounts{
+		Total: 3, InvalidGrant: 1, Blocked: 2,
+		InvalidGrantIDs: []string{"claude-773c1595"},
+		BlockedIDs:      []string{"claude-d21ba20a", "f78b268fda16"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("GrantReadiness = %+v, want %+v", got, want)
+	}
+	body, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "@") {
+		t.Fatalf("body names an email: %s", body)
 	}
 }

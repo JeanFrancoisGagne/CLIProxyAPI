@@ -61,7 +61,7 @@ func TestGrantReadinessCooledGrantIsBlocked(t *testing.T) {
 	}
 
 	got := m.GrantReadiness(time.Now(), 10*time.Minute)["claude"]
-	want := &GrantCounts{Total: 1, Blocked: 1, InvalidGrantIDs: []string{}, BlockedIDs: []string{"claude-only"}}
+	want := &GrantCounts{Total: 1, Blocked: 1, InvalidGrantIDs: []string{}, BlockedIDs: []string{"b2c887d8587d"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("GrantReadiness = %+v, want %+v", got, want)
 	}
@@ -107,7 +107,7 @@ func TestGrantReadinessUnauthorizedCooldownIsBlocked(t *testing.T) {
 	}
 
 	counts := m.GrantReadiness(time.Now(), 10*time.Minute)["codex"]
-	want := &GrantCounts{Total: 2, Usable: 1, Blocked: 1, InvalidGrantIDs: []string{}, BlockedIDs: []string{primary.ID}}
+	want := &GrantCounts{Total: 2, Usable: 1, Blocked: 1, InvalidGrantIDs: []string{}, BlockedIDs: []string{"898f602edbd8"}}
 	if !reflect.DeepEqual(counts, want) {
 		t.Fatalf("after a 401 cooldown: %+v, want %+v (%s usable)", counts, want, backup.ID)
 	}
@@ -128,7 +128,7 @@ func TestGrantReadinessTerminalUnauthorizedIsBlocked(t *testing.T) {
 	}
 
 	counts := m.GrantReadiness(time.Now(), 10*time.Minute)["claude"]
-	if counts.Usable != 0 || counts.Blocked != 1 || !reflect.DeepEqual(counts.BlockedIDs, []string{"claude-held"}) {
+	if counts.Usable != 0 || counts.Blocked != 1 || !reflect.DeepEqual(counts.BlockedIDs, []string{"1580079c7a62"}) {
 		t.Fatalf("terminal 401: %+v, want blocked", counts)
 	}
 }
@@ -148,7 +148,7 @@ func TestGrantReadinessCodexRefreshTokenReusedIsInvalidGrant(t *testing.T) {
 	_, _ = m.ForceRefreshAuth(context.Background(), "codex-a")
 
 	counts := m.GrantReadiness(now, 10*time.Minute)["codex"]
-	if counts.InvalidGrant != 1 || counts.Usable != 0 || !reflect.DeepEqual(counts.InvalidGrantIDs, []string{"codex-a"}) {
+	if counts.InvalidGrant != 1 || counts.Usable != 0 || !reflect.DeepEqual(counts.InvalidGrantIDs, []string{"3bcf6776aae8"}) {
 		t.Fatalf("after refresh_token_reused: %+v", counts)
 	}
 }

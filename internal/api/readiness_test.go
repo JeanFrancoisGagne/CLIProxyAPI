@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -27,7 +28,7 @@ func (r *fakeResolver) resolve(_ context.Context, host string) error {
 	defer r.mu.Unlock()
 	r.looked = append(r.looked, host)
 	if r.fail[host] {
-		return errors.New("lookup " + host + ": server misbehaving")
+		return errors.New("lookup " + host + " on 10.53.0.9:53: server misbehaving")
 	}
 	return nil
 }
@@ -322,5 +323,58 @@ func TestReadyRouteUsesManagerState(t *testing.T) {
 	code, report = get()
 	if c := report.Providers["claude"]; code != http.StatusOK || c == nil || c.Usable != 1 {
 		t.Fatalf("token valid 11 min: status %d counts %+v, want 200 with 1 usable", code, c)
+	}
+}
+
+// Any client key holder reads the ready body. It must not name the resolver
+// (a DNS error carries its address) nor an account email (an auth ID is the
+// file name, which ends in one).
+func TestReadyRouteBodyLeaksNoResolverOrEmail(t *testing.T) {
+	server := newTestServer(t)
+	res := &fakeResolver{fail: map[string]bool{"platform.claude.com": true}}
+	server.ready.resolve = res.resolve
+
+	held := &auth.Auth{
+		ID:       "claude-773c1595-jf@example.com.json",
+		Provider: "claude",
+		Metadata: map[string]any{
+			"access_token":  "at",
+			"refresh_token": "rt",
+			"expired":       time.Now().Add(5 * time.Hour).UTC().Format(time.RFC3339),
+		},
+		Unavailable: true,
+		Status:      auth.StatusError,
+		LastError:   &auth.Error{Code: "unauthorized", Message: "token revoked", HTTPStatus: http.StatusUnauthorized},
+	}
+	if _, err := server.handlers.AuthManager.Register(context.Background(), held); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz/ready", nil)
+	req.Header.Set("Authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.engine.ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status %d, want 503; body %s", rec.Code, body)
+	}
+	for _, leak := range []string{"@", "10.53.0.9", "misbehaving", "lookup"} {
+		if strings.Contains(body, leak) {
+			t.Fatalf("body holds %q: %s", leak, body)
+		}
+	}
+	var report readyReport
+	if err := json.Unmarshal(rec.Body.Bytes(), &report); err != nil {
+		t.Fatalf("body %q: %v", body, err)
+	}
+	if got := report.DNS["platform.claude.com"]; got != "failed" {
+		t.Fatalf("dns[platform.claude.com] = %q, want failed", got)
+	}
+	if got := report.DNS["api.anthropic.com"]; got != "ok" {
+		t.Fatalf("dns[api.anthropic.com] = %q, want ok", got)
+	}
+	c := report.Providers["claude"]
+	if c == nil || c.Blocked != 1 || !equalStrings(c.BlockedIDs, []string{"claude-773c1595"}) {
+		t.Fatalf("claude counts = %+v, want 1 blocked labelled claude-773c1595", c)
 	}
 }

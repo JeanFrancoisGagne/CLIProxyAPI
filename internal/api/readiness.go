@@ -16,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -64,7 +65,8 @@ type readyReport struct {
 	OverrideAge string                       `json:"override_age,omitempty"`
 	CheckedAt   string                       `json:"checked_at"`
 	Providers   map[string]*auth.GrantCounts `json:"providers"`
-	DNS         map[string]string            `json:"dns"`
+	// DNS maps each checked host to "ok" or "failed".
+	DNS map[string]string `json:"dns"`
 }
 
 // readyChecker answers GET /healthz/ready. Its fields are seams for tests.
@@ -126,7 +128,10 @@ func (rc *readyChecker) check(ctx context.Context) readyReport {
 	sort.Strings(hosts)
 	for host, errResolve := range rc.resolveAll(ctx, hosts) {
 		if errResolve != nil {
-			report.DNS[host] = errResolve.Error()
+			// The error text can name the resolver address. Any client key
+			// holder reads the body, so it gets "failed" and the log the text.
+			log.Warnf("readiness: cannot resolve %s: %v", host, errResolve)
+			report.DNS[host] = "failed"
 			report.Reasons = append(report.Reasons, "cannot resolve "+host)
 			continue
 		}
