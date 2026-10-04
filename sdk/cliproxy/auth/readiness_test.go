@@ -42,8 +42,8 @@ func TestGrantReadinessCountsEachState(t *testing.T) {
 	got := m.GrantReadiness(now, 10*time.Minute)
 
 	want := map[string]*GrantCounts{
-		"claude": {Total: 4, Usable: 1, Expiring: 2, Disabled: 1, InvalidGrantIDs: []string{}},
-		"codex":  {Total: 1, Usable: 1, InvalidGrantIDs: []string{}},
+		"claude": {Total: 4, Usable: 1, Expiring: 2, Disabled: 1, InvalidGrantIDs: []string{}, BlockedIDs: []string{}},
+		"codex":  {Total: 1, Usable: 1, InvalidGrantIDs: []string{}, BlockedIDs: []string{}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("GrantReadiness = %+v / %+v, want %+v / %+v", got["claude"], got["codex"], want["claude"], want["codex"])

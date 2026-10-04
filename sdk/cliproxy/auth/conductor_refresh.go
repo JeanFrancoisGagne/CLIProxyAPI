@@ -790,6 +790,12 @@ func (m *Manager) refreshAuthForRequestAtEpoch(ctx context.Context, id, failedAc
 		updated.NextRefreshAfter = now.Add(refreshIneffectiveBackoff)
 	}
 	saved, errUpdate := m.UpdateRefreshedAuth(ctx, base, updated)
+	if errUpdate == nil {
+		m.clearRefreshTokenRejected(id)
+		// One line per accepted refresh, so operators count refreshes here and
+		// not from the watcher, whose event name depends on how the file was written.
+		log.WithFields(log.Fields{"auth_id": auth.ID, "provider": auth.Provider}).Infof("refreshed provider=%s auth=%s", auth.Provider, auth.ID)
+	}
 	if errUpdate != nil {
 		// Warn, not debug: a restart after a lost persist fails with invalid_grant.
 		log.WithFields(log.Fields{"auth_id": auth.ID, "credential": auth.ID, "provider": auth.Provider}).Warnf("persist refreshed auth %s (%s) failed: %v", auth.Provider, auth.ID, errUpdate)

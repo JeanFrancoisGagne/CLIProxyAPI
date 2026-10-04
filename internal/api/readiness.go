@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -27,6 +28,11 @@ const (
 	// readyOverrideFile, in the auth dir, forces the answer for drills. It holds
 	// "ready" or "not-ready". Any other content is reported and ignored.
 	readyOverrideFile = "ready-override"
+	// readyOverrideMaxAge bounds a forced "ready". A forgotten file would keep a
+	// dead primary advertised and hide it from every alert, so "ready" counts
+	// only while the file is younger than this. "not-ready" has no limit: a
+	// forgotten one fails safe, the standby serves and its alert fires.
+	readyOverrideMaxAge = 15 * time.Minute
 )
 
 // readyUpstreamHosts lists the names each provider's requests and refreshes
@@ -51,12 +57,14 @@ func resolveHost(ctx context.Context, host string) error {
 }
 
 type readyReport struct {
-	Ready     bool                         `json:"ready"`
-	Reasons   []string                     `json:"reasons"`
-	Override  string                       `json:"override,omitempty"`
-	CheckedAt string                       `json:"checked_at"`
-	Providers map[string]*auth.GrantCounts `json:"providers"`
-	DNS       map[string]string            `json:"dns"`
+	Ready    bool     `json:"ready"`
+	Reasons  []string `json:"reasons"`
+	Override string   `json:"override,omitempty"`
+	// OverrideAge is how long ago the override file was last written.
+	OverrideAge string                       `json:"override_age,omitempty"`
+	CheckedAt   string                       `json:"checked_at"`
+	Providers   map[string]*auth.GrantCounts `json:"providers"`
+	DNS         map[string]string            `json:"dns"`
 }
 
 // readyChecker answers GET /healthz/ready. Its fields are seams for tests.
@@ -127,9 +135,17 @@ func (rc *readyChecker) check(ctx context.Context) readyReport {
 	sort.Strings(report.Reasons)
 	report.Ready = len(report.Reasons) == 0
 
-	switch override := rc.readOverride(); override {
+	override, age := rc.readOverride(now)
+	if override != "" {
+		report.OverrideAge = age.Round(time.Second).String()
+	}
+	switch override {
 	case "":
 	case "ready":
+		if age > readyOverrideMaxAge || age < -time.Minute {
+			report.Override = fmt.Sprintf("ignored: ready, written %s ago, limit %s", report.OverrideAge, readyOverrideMaxAge)
+			break
+		}
 		report.Override = override
 		report.Ready = true
 	case "not-ready":
@@ -161,20 +177,26 @@ func (rc *readyChecker) resolveAll(ctx context.Context, hosts []string) map[stri
 	return results
 }
 
-// readOverride returns the trimmed, lower-cased override file contents, or ""
-// when the file is absent or unreadable.
-func (rc *readyChecker) readOverride() string {
+// readOverride returns the trimmed, lower-cased override file contents and
+// the time since the file was written, or "" when the file is absent or
+// unreadable.
+func (rc *readyChecker) readOverride(now time.Time) (string, time.Duration) {
 	dir, err := util.ResolveAuthDir(rc.authDir())
 	if err != nil || dir == "" {
-		return ""
+		return "", 0
 	}
-	raw, err := os.ReadFile(filepath.Join(dir, readyOverrideFile))
+	path := filepath.Join(dir, readyOverrideFile)
+	info, err := os.Stat(path)
 	if err != nil {
-		return ""
+		return "", 0
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", 0
 	}
 	value := strings.ToLower(strings.TrimSpace(string(raw)))
 	if len(value) > 32 {
 		value = value[:32]
 	}
-	return value
+	return value, now.Sub(info.ModTime())
 }

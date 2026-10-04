@@ -40,6 +40,8 @@ func (r *fakeResolver) lookedUp() []string {
 	return out
 }
 
+var testNow = time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
+
 func testReadyChecker(t *testing.T, grants map[string]*auth.GrantCounts, res *fakeResolver) (*readyChecker, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -47,15 +49,25 @@ func testReadyChecker(t *testing.T, grants map[string]*auth.GrantCounts, res *fa
 		grants:  func(time.Time, time.Duration) map[string]*auth.GrantCounts { return grants },
 		authDir: func() string { return dir },
 		resolve: res.resolve,
-		now:     func() time.Time { return time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC) },
+		now:     func() time.Time { return testNow },
 	}, dir
+}
+
+// writeOverrideAt writes the override file with an mtime of written.
+func writeOverrideAt(t *testing.T, dir, value string, written time.Time) {
+	t.Helper()
+	path := filepath.Join(dir, readyOverrideFile)
+	if err := os.WriteFile(path, []byte(value), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, written, written); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func writeOverride(t *testing.T, dir, value string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, readyOverrideFile), []byte(value), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeOverrideAt(t, dir, value, testNow.Add(-time.Minute))
 }
 
 func claudeCounts(usable, expiring, invalid int) map[string]*auth.GrantCounts {
@@ -73,6 +85,7 @@ func TestReadyCheckStates(t *testing.T) {
 		grants    map[string]*auth.GrantCounts
 		failDNS   []string
 		override  string
+		age       time.Duration
 		wantReady bool
 		wantHosts []string
 	}{
@@ -89,7 +102,10 @@ func TestReadyCheckStates(t *testing.T) {
 		{name: "codex host not checked without codex grants", grants: claudeCounts(1, 0, 0), failDNS: []string{"chatgpt.com"}, wantReady: true,
 			wantHosts: []string{"api.anthropic.com", "platform.claude.com"}},
 		{name: "override not-ready on a healthy proxy", grants: claudeCounts(1, 0, 0), override: "not-ready\n", wantReady: false},
-		{name: "override ready on a dead proxy", grants: map[string]*auth.GrantCounts{}, failDNS: []string{"api.anthropic.com"}, override: " READY ", wantReady: true},
+		{name: "fresh override ready on a dead proxy", grants: map[string]*auth.GrantCounts{}, failDNS: []string{"api.anthropic.com"}, override: " READY ", age: 14 * time.Minute, wantReady: true},
+		{name: "stale override ready on a dead proxy", grants: map[string]*auth.GrantCounts{}, failDNS: []string{"api.anthropic.com"}, override: "ready", age: 16 * time.Minute, wantReady: false},
+		{name: "override ready dated in the future", grants: map[string]*auth.GrantCounts{}, override: "ready", age: -2 * time.Hour, wantReady: false},
+		{name: "old override not-ready still holds", grants: claudeCounts(1, 0, 0), override: "not-ready", age: 48 * time.Hour, wantReady: false},
 		{name: "unknown override is ignored", grants: claudeCounts(1, 0, 0), override: "maybe", wantReady: true},
 	}
 	for _, tc := range cases {
@@ -100,7 +116,11 @@ func TestReadyCheckStates(t *testing.T) {
 			}
 			rc, dir := testReadyChecker(t, tc.grants, res)
 			if tc.override != "" {
-				writeOverride(t, dir, tc.override)
+				age := tc.age
+				if age == 0 {
+					age = time.Minute
+				}
+				writeOverrideAt(t, dir, tc.override, testNow.Add(-age))
 			}
 			report := rc.check(context.Background())
 			if report.Ready != tc.wantReady {
@@ -133,6 +153,11 @@ func TestReadyOverrideIsReportedInBody(t *testing.T) {
 	writeOverride(t, dir, "maybe")
 	if got := rc.check(context.Background()).Override; got != "ignored: maybe" {
 		t.Fatalf("override = %q", got)
+	}
+	writeOverrideAt(t, dir, "ready", testNow.Add(-20*time.Minute))
+	report := rc.check(context.Background())
+	if want := "ignored: ready, written 20m0s ago, limit 15m0s"; report.Override != want || report.OverrideAge != "20m0s" {
+		t.Fatalf("stale ready: override %q age %q, want %q", report.Override, report.OverrideAge, want)
 	}
 }
 
@@ -243,5 +268,59 @@ func TestReadyRoute(t *testing.T) {
 	}
 	if code, _ = get("test-key"); code != http.StatusOK {
 		t.Fatalf("override removed: status %d, want 200", code)
+	}
+}
+
+// Through the route with the real auth manager: a Claude access token that
+// expires within 10 min does not count, nor does a grant the selector skips.
+func TestReadyRouteUsesManagerState(t *testing.T) {
+	server := newTestServer(t)
+	server.ready.resolve = (&fakeResolver{fail: map[string]bool{}}).resolve
+
+	get := func() (int, readyReport) {
+		req := httptest.NewRequest(http.MethodGet, "/healthz/ready", nil)
+		req.Header.Set("Authorization", "Bearer test-key")
+		rec := httptest.NewRecorder()
+		server.engine.ServeHTTP(rec, req)
+		var report readyReport
+		if err := json.Unmarshal(rec.Body.Bytes(), &report); err != nil {
+			t.Fatalf("body %q: %v", rec.Body.String(), err)
+		}
+		return rec.Code, report
+	}
+	register := func(a *auth.Auth) {
+		t.Helper()
+		if _, err := server.handlers.AuthManager.Register(context.Background(), a); err != nil {
+			t.Fatalf("register %s: %v", a.ID, err)
+		}
+	}
+	claudeGrant := func(id string, expires time.Time) *auth.Auth {
+		return &auth.Auth{ID: id, Provider: "claude", Metadata: map[string]any{
+			"access_token":  "at-" + id,
+			"refresh_token": "rt-" + id,
+			"expired":       expires.UTC().Format(time.RFC3339),
+		}}
+	}
+
+	register(claudeGrant("claude-soon.json", time.Now().Add(5*time.Minute)))
+	code, report := get()
+	if c := report.Providers["claude"]; code != http.StatusServiceUnavailable || c == nil || c.Expiring != 1 || c.Usable != 0 {
+		t.Fatalf("token valid 5 min: status %d counts %+v, want 503 with 1 expiring", code, c)
+	}
+
+	held := claudeGrant("claude-held.json", time.Now().Add(5*time.Hour))
+	held.Unavailable = true
+	held.Status = auth.StatusError
+	held.LastError = &auth.Error{Code: "unauthorized", Message: "token revoked", HTTPStatus: http.StatusUnauthorized}
+	register(held)
+	code, report = get()
+	if c := report.Providers["claude"]; code != http.StatusServiceUnavailable || c == nil || c.Blocked != 1 || c.Usable != 0 {
+		t.Fatalf("terminal 401 grant: status %d counts %+v, want 503 with 1 blocked", code, c)
+	}
+
+	register(claudeGrant("claude-live.json", time.Now().Add(11*time.Minute)))
+	code, report = get()
+	if c := report.Providers["claude"]; code != http.StatusOK || c == nil || c.Usable != 1 {
+		t.Fatalf("token valid 11 min: status %d counts %+v, want 200 with 1 usable", code, c)
 	}
 }
