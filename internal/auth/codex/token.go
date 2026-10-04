@@ -4,13 +4,12 @@
 package codex
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/durable"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/misc"
-	log "github.com/sirupsen/logrus"
 )
 
 // CodexTokenStorage stores OAuth2 token information for OpenAI Codex API authentication.
@@ -69,17 +68,7 @@ func (ts *CodexTokenStorage) SaveTokenToFile(authFilePath string) error {
 		return fmt.Errorf("failed to merge metadata: %w", errMerge)
 	}
 
-	f, err := os.Create(authFilePath)
-	if err != nil {
-		return fmt.Errorf("failed to create token file: %w", err)
-	}
-	defer func() {
-		if errClose := f.Close(); errClose != nil {
-			log.Errorf("codex token storage: close token file error: %v", errClose)
-		}
-	}()
-
-	if err = json.NewEncoder(f).Encode(data); err != nil {
+	if err := durable.WriteJSON(authFilePath, data, "", 0o600); err != nil {
 		return fmt.Errorf("failed to write token to file: %w", err)
 	}
 	return nil
