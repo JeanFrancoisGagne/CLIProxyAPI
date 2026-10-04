@@ -172,6 +172,9 @@ func TestGinLogrusLoggerHealthProbeStatus(t *testing.T) {
 		{"server_error", "HEAD", "/healthz", 503, true},
 		{"similar_path", "GET", "/healthz-extra", 200, true},
 		{"other_method", "POST", "/healthz", 200, true},
+		{"ready_ok", "GET", "/healthz/ready", 200, false},
+		{"ready_not_ready", "GET", "/healthz/ready", 503, true},
+		{"ready_unauthorized", "GET", "/healthz/ready", 401, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			engine := gin.New()

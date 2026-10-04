@@ -644,6 +644,9 @@ func (m *Manager) refreshAuthForRequestAtEpoch(ctx context.Context, id, failedAc
 	if err != nil {
 		unauthorized := isUnauthorizedError(err)
 		invalidGrant := isInvalidGrantError(err)
+		if invalidGrant || strings.Contains(strings.ToLower(err.Error()), "refresh_token_reused") {
+			m.markRefreshTokenRejected(id, authRefreshToken(base))
+		}
 		shouldReschedule := false
 		isDisabled := false
 		shouldUnschedule := false

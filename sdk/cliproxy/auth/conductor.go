@@ -207,6 +207,9 @@ type Manager struct {
 	refreshLocks sync.Map
 	// persistLocks serializes disk persistence per auth ID and guards against out-of-order writes.
 	persistLocks sync.Map
+	// rejectedRefreshTokens maps auth ID to the sha256 of the refresh token
+	// that last drew invalid_grant. GrantReadiness reads it.
+	rejectedRefreshTokens sync.Map
 }
 
 // NewManager constructs a manager with optional custom selector and hook.

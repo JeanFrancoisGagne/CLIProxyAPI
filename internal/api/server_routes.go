@@ -51,6 +51,9 @@ func (s *Server) setupRoutes() {
 	}
 	s.engine.GET("/healthz", healthzHandler)
 	s.engine.HEAD("/healthz", healthzHandler)
+	// Readiness counts live grants and checks DNS. Same auth as /v1/models.
+	s.ready = s.newReadyChecker()
+	s.engine.GET("/healthz/ready", AuthMiddleware(s.accessManager), s.ready.handle)
 
 	s.engine.GET("/management.html", s.serveManagementControlPanel)
 	openaiHandlers := openai.NewOpenAIAPIHandler(s.handlers)
