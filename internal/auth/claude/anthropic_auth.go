@@ -565,10 +565,15 @@ func (o *ClaudeAuth) refreshTokensSingleFlight(ctx context.Context, refreshToken
 			setClaudeRefreshBlockedUntil(refreshToken, time.Now().Add(retryAfter))
 			return nil, &refreshHTTPError{status: resp.StatusCode, message: message, retryable: false}
 		}
+		// A 502 or 504 comes from a gateway that may have lost the answer after
+		// the token server already rotated the refresh token, so it is as
+		// ambiguous as a transport error.
 		return nil, &refreshHTTPError{
-			status:    resp.StatusCode,
-			message:   message,
-			retryable: resp.StatusCode >= http.StatusInternalServerError,
+			status:  resp.StatusCode,
+			message: message,
+			retryable: resp.StatusCode >= http.StatusInternalServerError &&
+				resp.StatusCode != http.StatusBadGateway &&
+				resp.StatusCode != http.StatusGatewayTimeout,
 		}
 	}
 

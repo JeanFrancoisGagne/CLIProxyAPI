@@ -7,6 +7,7 @@ package codex
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -245,7 +246,7 @@ func (o *CodexAuth) refreshTokensSingleFlight(ctx context.Context, refreshToken 
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("token refresh failed with status %d: %s", resp.StatusCode, string(body))
+		return nil, &refreshStatusError{status: resp.StatusCode, body: string(body)}
 	}
 
 	var tokenResp struct {
@@ -327,7 +328,7 @@ func (o *CodexAuth) RefreshTokensWithRetry(ctx context.Context, refreshToken str
 		if err == nil {
 			return tokenData, nil
 		}
-		if isNonRetryableRefreshErr(err) {
+		if !isCodexRefreshRetryable(err) {
 			log.Warnf("Token refresh attempt %d failed with non-retryable error: %v", attempt+1, err)
 			return nil, err
 		}
@@ -339,12 +340,32 @@ func (o *CodexAuth) RefreshTokensWithRetry(ctx context.Context, refreshToken str
 	return nil, fmt.Errorf("token refresh failed after %d attempts: %w", maxRetries, lastErr)
 }
 
-func isNonRetryableRefreshErr(err error) bool {
-	if err == nil {
+// refreshStatusError is a non-200 answer from the token endpoint.
+type refreshStatusError struct {
+	status int
+	body   string
+}
+
+func (e *refreshStatusError) Error() string {
+	return fmt.Sprintf("token refresh failed with status %d: %s", e.status, e.body)
+}
+
+// isCodexRefreshRetryable reports whether the same refresh token may be sent
+// again. OpenAI refresh tokens are single use. After a transport, body-read or
+// decode error, or a 502 or 504 from a gateway, the server may have rotated the
+// token and the answer was lost; a replay then draws refresh_token_reused.
+// Only a 500 or 503 answer (the server says it failed) is retried.
+func isCodexRefreshRetryable(err error) bool {
+	var statusErr *refreshStatusError
+	if !errors.As(err, &statusErr) {
 		return false
 	}
-	raw := strings.ToLower(err.Error())
-	return strings.Contains(raw, "refresh_token_reused")
+	if strings.Contains(strings.ToLower(statusErr.body), "refresh_token_reused") {
+		return false
+	}
+	return statusErr.status >= http.StatusInternalServerError &&
+		statusErr.status != http.StatusBadGateway &&
+		statusErr.status != http.StatusGatewayTimeout
 }
 
 // UpdateTokenStorage updates an existing CodexTokenStorage with new token data.

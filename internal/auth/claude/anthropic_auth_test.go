@@ -350,6 +350,50 @@ func TestRefreshTokensWithRetry_DoesNotReplayAfterTransportError(t *testing.T) {
 	}
 }
 
+// A 502 or 504 comes from a gateway that may have lost the answer after the
+// token server rotated the refresh token. A 500 or 503 is the token server's
+// own failure and is retried.
+func TestRefreshTokensWithRetry_DoesNotReplayAfterGatewayError(t *testing.T) {
+	cases := []struct {
+		status    int
+		wantCalls int32
+	}{
+		{status: http.StatusBadGateway, wantCalls: 1},
+		{status: http.StatusGatewayTimeout, wantCalls: 1},
+		{status: http.StatusInternalServerError, wantCalls: 3},
+		{status: http.StatusServiceUnavailable, wantCalls: 3},
+	}
+	for _, tc := range cases {
+		t.Run(http.StatusText(tc.status), func(t *testing.T) {
+			resetClaudeRefreshState()
+			defer resetClaudeRefreshState()
+
+			var calls int32
+			auth := &ClaudeAuth{
+				httpClient: &http.Client{
+					Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+						atomic.AddInt32(&calls, 1)
+						return &http.Response{
+							StatusCode: tc.status,
+							Body:       io.NopCloser(strings.NewReader(`upstream error`)),
+							Header:     make(http.Header),
+							Request:    req,
+						}, nil
+					}),
+				},
+			}
+
+			_, err := auth.RefreshTokensWithRetry(context.Background(), "single-use-refresh-token", 3)
+			if err == nil {
+				t.Fatal("expected refresh error")
+			}
+			if got := atomic.LoadInt32(&calls); got != tc.wantCalls {
+				t.Fatalf("status %d: refresh attempts = %d, want %d", tc.status, got, tc.wantCalls)
+			}
+		})
+	}
+}
+
 func TestRefreshTokensWithRetry_429BlocksImmediateReplay(t *testing.T) {
 	resetClaudeRefreshState()
 	defer resetClaudeRefreshState()
