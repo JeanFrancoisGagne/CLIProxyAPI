@@ -17,7 +17,7 @@ type GrantCounts struct {
 	Total int `json:"total"`
 	// Usable credentials hold an access token valid past the lead time and a
 	// refresh token that has not drawn invalid_grant, and the manager would
-	// select them for a request at the end of the lead time.
+	// select them for a request now.
 	Usable int `json:"usable"`
 	// Expiring credentials have no access token valid past the lead time.
 	Expiring int `json:"expiring"`
@@ -25,8 +25,7 @@ type GrantCounts struct {
 	// invalid_grant. Only a successful refresh or a new login clears this.
 	InvalidGrant int `json:"invalid_grant"`
 	// Blocked credentials have a good token but the manager will not select
-	// them: they are held after a terminal 401, or cooling down (quota, 429)
-	// past the lead time.
+	// them now: they are held after a terminal 401, or cooling down (quota, 429).
 	Blocked int `json:"blocked"`
 	// Disabled credentials were turned off by the operator.
 	Disabled int `json:"disabled"`
@@ -100,8 +99,9 @@ func (m *Manager) refreshTokenRejected(a *Auth) bool {
 }
 
 // GrantReadiness counts each provider's OAuth credentials by whether they can
-// serve a request for at least lead from now. A credential counts as Blocked
-// when the selector would skip it, with no model named, at now+lead.
+// serve a request now with an access token valid for at least lead from now.
+// A credential counts as Blocked when the selector would skip it, with no
+// model named, at now. Token expiry needs a lead; a cooldown must expire first.
 // Providers are keyed in lower case.
 func (m *Manager) GrantReadiness(now time.Time, lead time.Duration) map[string]*GrantCounts {
 	out := make(map[string]*GrantCounts)
@@ -128,7 +128,7 @@ func (m *Manager) GrantReadiness(now time.Time, lead time.Duration) map[string]*
 			counts.InvalidGrantIDs = append(counts.InvalidGrantIDs, grantLabel(a.ID))
 		case !a.HasValidAccessToken(horizon):
 			counts.Expiring++
-		case grantBlocked(a, horizon):
+		case grantBlocked(a, now):
 			counts.Blocked++
 			counts.BlockedIDs = append(counts.BlockedIDs, grantLabel(a.ID))
 		default:
@@ -142,10 +142,9 @@ func (m *Manager) GrantReadiness(now time.Time, lead time.Duration) map[string]*
 	return out
 }
 
-// grantBlocked reports whether the selector would skip a for every model at
-// horizon: a terminal 401, a credential-wide quota, or an auth-level cooldown
-// that lasts past horizon.
-func grantBlocked(a *Auth, horizon time.Time) bool {
-	blocked, _, _ := isAuthBlockedForModel(a, "", horizon)
+// grantBlocked reports whether the selector would skip a for every model now:
+// a terminal 401, a credential-wide quota, or an active auth-level cooldown.
+func grantBlocked(a *Auth, now time.Time) bool {
+	blocked, _, _ := isAuthBlockedForModel(a, "", now)
 	return blocked
 }

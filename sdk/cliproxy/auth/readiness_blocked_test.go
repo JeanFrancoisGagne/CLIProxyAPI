@@ -67,8 +67,8 @@ func TestGrantReadinessCooledGrantIsBlocked(t *testing.T) {
 	}
 }
 
-// A cooldown that ends inside the lead time leaves the grant usable.
-func TestGrantReadinessShortCooldownStaysUsable(t *testing.T) {
+// Token lead time must not release a grant before its active cooldown ends.
+func TestGrantReadinessShortCooldownIsBlockedUntilReset(t *testing.T) {
 	model := "claude-readiness-short-cooldown"
 	exec := weeklyLimitExecutor{unauthorizedRefreshExecutor: &unauthorizedRefreshExecutor{id: "claude"}, wait: 2 * time.Minute}
 	m := NewManager(nil, nil, nil)
@@ -83,8 +83,27 @@ func TestGrantReadinessShortCooldownStaysUsable(t *testing.T) {
 		t.Fatalf("auth not cooling down: unavailable=%v next_retry=%v", got.Unavailable, got.NextRetryAfter)
 	}
 
-	if counts := m.GrantReadiness(time.Now(), 10*time.Minute)["claude"]; counts.Usable != 1 || counts.Blocked != 0 {
-		t.Fatalf("2 min cooldown: %+v, want usable", counts)
+	if _, err := m.Execute(context.Background(), []string{"claude"}, cliproxyexecutor.Request{Model: model}, cliproxyexecutor.Options{}); err == nil {
+		t.Fatal("second request succeeded during the active cooldown")
+	}
+	if calls := exec.ExecuteCalls(); len(calls) != 1 {
+		t.Fatalf("executor calls = %v, want the cooling grant skipped", calls)
+	}
+	for _, tc := range []struct {
+		name string
+		now  time.Time
+		want *GrantCounts
+	}{
+		{"one minute before reset", got.NextRetryAfter.Add(-time.Minute), &GrantCounts{Total: 1, Blocked: 1, InvalidGrantIDs: []string{}, BlockedIDs: []string{"b2c887d8587d"}}},
+		{"just before reset", got.NextRetryAfter.Add(-time.Nanosecond), &GrantCounts{Total: 1, Blocked: 1, InvalidGrantIDs: []string{}, BlockedIDs: []string{"b2c887d8587d"}}},
+		{"at reset", got.NextRetryAfter, &GrantCounts{Total: 1, Usable: 1, InvalidGrantIDs: []string{}, BlockedIDs: []string{}}},
+		{"after reset", got.NextRetryAfter.Add(time.Nanosecond), &GrantCounts{Total: 1, Usable: 1, InvalidGrantIDs: []string{}, BlockedIDs: []string{}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if counts := m.GrantReadiness(tc.now, 10*time.Minute)["claude"]; !reflect.DeepEqual(counts, tc.want) {
+				t.Fatalf("active 2 min cooldown: %+v, want %+v", counts, tc.want)
+			}
+		})
 	}
 }
 

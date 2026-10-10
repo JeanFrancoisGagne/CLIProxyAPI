@@ -326,6 +326,58 @@ func TestReadyRouteUsesManagerState(t *testing.T) {
 	}
 }
 
+// A live token cannot make the route ready while its grant is still cooling down.
+func TestReadyRouteWaitsForShortCooldownReset(t *testing.T) {
+	server := newTestServer(t)
+	server.ready.resolve = (&fakeResolver{fail: map[string]bool{}}).resolve
+	now := time.Now().Truncate(time.Second)
+	checkedAt := now
+	server.ready.now = func() time.Time { return checkedAt }
+	reset := now.Add(2 * time.Minute)
+	grant := &auth.Auth{
+		ID: "claude-cooling.json", Provider: "claude",
+		Metadata: map[string]any{
+			"access_token": "at", "refresh_token": "rt",
+			"expired": now.Add(2 * time.Hour).UTC().Format(time.RFC3339),
+		},
+		Unavailable: true, NextRetryAfter: reset,
+		Quota: auth.QuotaState{Exceeded: true, Reason: "credential_quota", NextRecoverAt: reset},
+	}
+	if _, err := server.handlers.AuthManager.Register(context.Background(), grant); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	for _, tc := range []struct {
+		name    string
+		at      time.Time
+		status  int
+		usable  int
+		blocked int
+	}{
+		{"cooling within token lead", now, http.StatusServiceUnavailable, 0, 1},
+		{"just before reset", reset.Add(-time.Nanosecond), http.StatusServiceUnavailable, 0, 1},
+		{"at reset", reset, http.StatusOK, 1, 0},
+		{"after reset", reset.Add(time.Nanosecond), http.StatusOK, 1, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			checkedAt = tc.at
+			req := httptest.NewRequest(http.MethodGet, "/healthz/ready", nil)
+			req.Header.Set("Authorization", "Bearer test-key")
+			rec := httptest.NewRecorder()
+			server.engine.ServeHTTP(rec, req)
+			var report readyReport
+			if err := json.Unmarshal(rec.Body.Bytes(), &report); err != nil {
+				t.Fatalf("body %q: %v", rec.Body.String(), err)
+			}
+			counts := report.Providers["claude"]
+			if rec.Code != tc.status || report.Ready != (tc.status == http.StatusOK) ||
+				counts == nil || counts.Usable != tc.usable || counts.Blocked != tc.blocked {
+				t.Fatalf("status %d ready %v counts %+v, want status %d usable %d blocked %d",
+					rec.Code, report.Ready, counts, tc.status, tc.usable, tc.blocked)
+			}
+		})
+	}
+}
+
 // Any client key holder reads the ready body. It must not name the resolver
 // (a DNS error carries its address) nor an account email (an auth ID is the
 // file name, which ends in one).
