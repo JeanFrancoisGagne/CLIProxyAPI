@@ -1,5 +1,7 @@
 package claude
 
+import "github.com/router-for-me/CLIProxyAPI/v8/internal/accountmanagement"
+
 // PKCECodes holds PKCE verification codes for OAuth2 PKCE flow
 type PKCECodes struct {
 	// CodeVerifier is the cryptographically random string used to correlate
@@ -11,6 +13,7 @@ type PKCECodes struct {
 
 // ClaudeTokenData holds OAuth token information from Anthropic
 type ClaudeTokenData struct {
+	AccountProfile *accountmanagement.Profile `json:"-"`
 	// AccessToken is the OAuth2 access token for API access.
 	AccessToken string `json:"access_token"`
 	// RefreshToken is used to obtain new access tokens.

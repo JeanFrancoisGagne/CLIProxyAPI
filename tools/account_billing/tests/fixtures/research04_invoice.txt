@@ -1,0 +1,18 @@
+Invoice
+Invoice number SYN-04-0001
+Date of issue October 16, 2026
+Date due October 16, 2026
+
+Anthropic, PBC                         Bill to
+San Francisco, California             Example Buyer
+United States                         research04@example.test
+
+CA$321.93 due October 16, 2026
+Description                           Qty  Unit price  Amount
+Max                                   1    CA$280.00   CA$280.00
+Oct 16 – Nov 16, 2026
+Subtotal                                              CA$280.00
+Total excluding tax                                   CA$280.00
+Tax                                                   CA$41.93
+Total                                                 CA$321.93
+Amount due                                            CA$321.93

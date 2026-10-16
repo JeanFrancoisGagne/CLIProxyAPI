@@ -1,0 +1,23 @@
+{
+  "auth_index": "fixture-auth-05",
+  "account_email": "research05@example.test",
+  "source": "gmail",
+  "observed_at": "2026-10-16T15:00:00Z",
+  "receipts": [
+    {
+      "invoice_id": "SYN-05-0002",
+      "issued_at": "2026-10-16",
+      "currency": "CAD",
+      "amount_minor": 32193,
+      "billing_name": "Example Company",
+      "billing_email": "research05@example.test",
+      "source_mailbox": "billing@example.test",
+      "source_message_id": "message-05",
+      "evidence_sha256": "3220ab1fe1fb6c41279c8e9324d719f0408d2ffe1443598bc9b88c03d23d5d66",
+      "pdf_base64": "JVBERi0xLjQKaW52b2ljZQolJUVPRgo=",
+      "period_start": "2026-10-16",
+      "period_end": "2026-11-16",
+      "source_authentication": "gmail_direct"
+    }
+  ]
+}

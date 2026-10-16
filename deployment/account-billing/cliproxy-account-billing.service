@@ -1,0 +1,17 @@
+[Unit]
+Description=Collect connected Claude account receipts from the existing authorized mailbox
+After=network-online.target cliproxy.service cliproxy-mgmt.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/.cli-proxy-api/secrets.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 %h/.local/lib/cliproxy-account-billing/sync_receipts.py --management-url http://127.0.0.1:8318 --mailbox jfgagne@nera.software --ssh-target jf@192.168.1.184 --ssh-identity %h/.ssh/cliproxy-billing-ed25519 --ssh-known-hosts %h/.ssh/cliproxy-billing-known-hosts
+TimeoutStartSec=20min
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

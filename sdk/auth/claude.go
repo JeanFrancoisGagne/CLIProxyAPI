@@ -204,6 +204,9 @@ waitForCallback:
 	metadata := map[string]any{
 		"email": tokenStorage.Email,
 	}
+	if tokenStorage.AccountProfile != nil {
+		metadata["account_profile"] = tokenStorage.AccountProfile
+	}
 	if tokenStorage.AccountUUID != "" {
 		metadata["account_uuid"] = tokenStorage.AccountUUID
 	}

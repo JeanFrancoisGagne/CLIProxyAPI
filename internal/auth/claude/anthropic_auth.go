@@ -159,12 +159,19 @@ type authorizationCodeExchangeRequest struct {
 // OAuthProfile is the account identity returned by Anthropic's OAuth profile endpoint.
 type OAuthProfile struct {
 	Account struct {
-		UUID  string `json:"uuid"`
-		Email string `json:"email"`
+		UUID         string `json:"uuid"`
+		Email        string `json:"email"`
+		FullName     string `json:"full_name"`
+		DisplayName  string `json:"display_name"`
+		HasClaudeMax *bool  `json:"has_claude_max"`
+		HasClaudePro *bool  `json:"has_claude_pro"`
 	} `json:"account"`
 	Organization struct {
-		UUID string `json:"uuid"`
-		Name string `json:"name"`
+		UUID                  string `json:"uuid"`
+		Name                  string `json:"name"`
+		Type                  string `json:"organization_type"`
+		SubscriptionStatus    string `json:"subscription_status"`
+		SubscriptionCreatedAt string `json:"subscription_created_at"`
 	} `json:"organization"`
 }
 
@@ -451,7 +458,9 @@ func (o *ClaudeAuth) ExchangeCodeForTokens(ctx context.Context, code, state stri
 
 	// Replay the native login companion lookups and let the profile response win
 	// where it carries identity the token response omitted.
-	if profile := o.inspectOAuthAccount(ctx, tokenResp.AccessToken); profile != nil {
+	profile := o.inspectOAuthAccount(ctx, tokenResp.AccessToken)
+	tokenData.AccountProfile = profile.AccountSnapshot()
+	if profile != nil {
 		if value := strings.TrimSpace(profile.Account.UUID); value != "" {
 			tokenData.AccountUUID = value
 		}
@@ -594,6 +603,7 @@ func (o *ClaudeAuth) refreshTokensSingleFlight(ctx context.Context, refreshToken
 		Expire:       time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second).Format(time.RFC3339),
 	}
 	profile, errProfile := o.FetchOAuthProfile(ctx, tokenResp.AccessToken)
+	tokenData.AccountProfile = profile.AccountSnapshot()
 	if errProfile != nil {
 		log.Warnf("fetch Claude OAuth profile after refresh: %v", errProfile)
 		return tokenData, nil
@@ -616,6 +626,7 @@ func (o *ClaudeAuth) refreshTokensSingleFlight(ctx context.Context, refreshToken
 //   - *ClaudeTokenStorage: A new token storage instance
 func (o *ClaudeAuth) CreateTokenStorage(bundle *ClaudeAuthBundle) *ClaudeTokenStorage {
 	storage := &ClaudeTokenStorage{
+		AccountProfile:   bundle.TokenData.AccountProfile,
 		AccessToken:      bundle.TokenData.AccessToken,
 		RefreshToken:     bundle.TokenData.RefreshToken,
 		LastRefresh:      bundle.LastRefresh,

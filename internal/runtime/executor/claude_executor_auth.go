@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/accountmanagement"
 	"strings"
 	"time"
 
@@ -18,6 +19,36 @@ const (
 )
 
 type claudeOAuthProfileFetcher func(context.Context, *cliproxyauth.Auth, string) (*claudeauth.OAuthProfile, error)
+
+func (e *ClaudeExecutor) AccountProfileNeedsBackfill(auth *cliproxyauth.Auth) bool {
+	apiKey, _ := claudeCreds(auth)
+	return isClaudeOAuthToken(apiKey) && accountmanagement.ReadProfile(auth.Metadata, "claude").Status == "pending"
+}
+
+func (e *ClaudeExecutor) FetchAccountProfile(ctx context.Context, auth *cliproxyauth.Auth) (map[string]any, error) {
+	apiKey, _ := claudeCreds(auth)
+	values := make(map[string]any)
+	var profile *claudeauth.OAuthProfile
+	if !isClaudeSetupToken(auth, apiKey) {
+		var err error
+		profile, err = e.fetchClaudeOAuthProfile(ctx, auth, apiKey)
+		if err != nil && ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+	}
+	snapshot := *profile.AccountSnapshot()
+	if err := accountmanagement.Put(values, accountmanagement.ProfileKey, snapshot); err != nil {
+		return nil, err
+	}
+	if profile != nil {
+		for key, value := range map[string]string{"email": profile.Account.Email, "account_uuid": profile.Account.UUID, "organization_uuid": profile.Organization.UUID, "organization_name": profile.Organization.Name} {
+			if value != "" {
+				values[key] = value
+			}
+		}
+	}
+	return values, nil
+}
 
 func (e *ClaudeExecutor) ShouldPrepareRequestAuth(auth *cliproxyauth.Auth) bool {
 	apiKey, _ := claudeCreds(auth)
@@ -168,6 +199,12 @@ func (e *ClaudeExecutor) Refresh(ctx context.Context, auth *cliproxyauth.Auth) (
 	}
 	claudeauth.EnsureMetadataMap(&auth.Metadata)
 	claudeauth.StoreMetadataValue(&auth.Metadata, "access_token", td.AccessToken)
+	if td.AccountProfile != nil {
+		profile := accountmanagement.MergeProfile(accountmanagement.ReadProfile(auth.Metadata, "claude"), *td.AccountProfile)
+		if err := accountmanagement.Put(auth.Metadata, accountmanagement.ProfileKey, profile); err != nil {
+			return nil, err
+		}
+	}
 	claudeauth.StoreMetadataString(&auth.Metadata, "refresh_token", td.RefreshToken)
 	// Profile fields are optional when token rotation succeeds but the follow-up
 	// profile lookup fails. Never erase the previously resolved credential identity.

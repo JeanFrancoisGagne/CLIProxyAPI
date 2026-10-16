@@ -1,0 +1,17 @@
+Receipt
+Invoice number SYN-05-0002
+Date paid October 16, 2026
+
+Anthropic, PBC                         Bill to
+San Francisco, California             Example Company
+United States                         research05@example.test
+
+CA$321.93 paid October 16, 2026
+Description                           Qty  Unit price  Amount
+Max                                   1    CA$280.00   CA$280.00
+Oct 16 – Nov 16, 2026
+Subtotal                                              CA$280.00
+Total excluding tax                                   CA$280.00
+Tax                                                   CA$41.93
+Total                                                 CA$321.93
+Amount paid                                           CA$321.93

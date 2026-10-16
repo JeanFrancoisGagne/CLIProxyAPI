@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/accountmanagement"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/durable"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/misc"
 )
@@ -16,6 +17,7 @@ import (
 // It maintains compatibility with the existing auth system while adding Claude-specific fields
 // for managing access tokens, refresh tokens, and user account information.
 type ClaudeTokenStorage struct {
+	AccountProfile *accountmanagement.Profile `json:"account_profile,omitempty"`
 	// IDToken is the JWT ID token containing user claims and identity information.
 	IDToken string `json:"id_token"`
 

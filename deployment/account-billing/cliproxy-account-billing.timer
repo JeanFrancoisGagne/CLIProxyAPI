@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh connected Claude account billing every six hours
+
+[Timer]
+OnCalendar=*-*-* 00,06,12,18:00:00
+RandomizedDelaySec=5min
+Persistent=yes
+Unit=cliproxy-account-billing.service
+
+[Install]
+WantedBy=timers.target

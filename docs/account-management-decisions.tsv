@@ -1,0 +1,9 @@
+ts	phase	decision	why	evidence	result
+2026-10-16T14:45:00Z	design	Reuse OAuth profile refresh and existing Gmail authorization	Avoid recurring browser logins	Live profile200; Nera Gmail readonly labels and receipts succeeded	Implementation underway
+2026-10-16T14:45:00Z	billing	Use invoice service periods without claiming future renewal	Receipts contain billed dates but no renewal promise	Two independent Max invoices show Oct16-Nov16	Contract separates period_end from renewal_at
+2026-10-16T14:45:00Z	isolation	Use separate backend and frontend worktrees	Keep prior deployed branches unchanged	Backend d4cc4606; frontend bdebda9	Both isolated
+2026-10-16T16:01:24Z	deployment-design	NVR pulls receipts over one restricted SSH identity	Keep Google credentials on their current host and management key on NVR	LAN SSH NVR and LDB verified; host public key pinned	Templates written
+2026-10-16T16:02:38Z	rollback	Private NVR deployment backup created	Independent LAN SSH survives proxy restart	/home/jf/.local/state/cliproxy-account-management/20261016T160234Z; 13 credential JSON snapshots; binary and UI hashes retained	Ready
+2026-10-16T16:06:25Z	review	Fix both independent backend findings before deployment	Stale profile responses and remote Store I/O can affect account identity and inference	Fresh full-source reviewer; two P2 findings	Repair in progress
+2026-10-16T16:14:07Z	verification	Deploy reviewed binary and enable collection	Automate account details without recurring website logins	12 successful scans; 15 verified PDFs; repeat run unchanged; inference200	Complete
+2026-10-16T16:14:07Z	audit-note	First three decision timestamps were approximate reconstructions	Keep timing evidence honest	Later deployment and proof rows use measured UTC times	Clarified

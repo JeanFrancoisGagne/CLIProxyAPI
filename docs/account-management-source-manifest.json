@@ -1,0 +1,82 @@
+[
+  {
+    "path": "internal/accountmanagement/billing.go",
+    "sha256": "2770752621d9c21ae3f958be557ef92f048a07fe78ea7d88497b4adc11505d2f"
+  },
+  {
+    "path": "internal/accountmanagement/invoices.go",
+    "sha256": "1127bbe4db19f7d0f7aa7f618c854612d49c8a59ec03231368369ae0eb326e2a"
+  },
+  {
+    "path": "internal/accountmanagement/snapshots_test.go",
+    "sha256": "a3475f0864cce25e0d9fc83c3c005beba073240e55f503b998f9ac5a65c34b30"
+  },
+  {
+    "path": "internal/accountmanagement/snapshots.go",
+    "sha256": "05d1111cd01f996321f4273526e9fdc2001a506260c9d5ae36195a708ef3e48e"
+  },
+  {
+    "path": "internal/api/handlers/management/account_receipts.go",
+    "sha256": "3047381a853b3533771a87c9595a86a51ce76469284fe6f15dd1e7384a16d102"
+  },
+  {
+    "path": "internal/api/handlers/management/accounts_test.go",
+    "sha256": "7cd9c5648c2acd7c2282bcd558dced5c50371576d66551b809105354d2534699"
+  },
+  {
+    "path": "internal/api/handlers/management/accounts.go",
+    "sha256": "d205e4adc15692f9e246bc876c02f8d6df4f99f57e05231d3f380f4c4c707edf"
+  },
+  {
+    "path": "internal/api/handlers/management/auth_files_provider_oauth.go",
+    "sha256": "12ad5a2cbb41694f3f45515b5bceb4b7aedba66b6b9d1354e26214fd2ad9e869"
+  },
+  {
+    "path": "internal/api/server_management_v8.go",
+    "sha256": "dbd757399eaf1bc86227150bfdad19cba0494e2d0a900e058698acfccdfe779b"
+  },
+  {
+    "path": "internal/auth/claude/account_profile_test.go",
+    "sha256": "e6732cd2463989e7df21684aca13cc051572ada4d33adc429f538fc34f21391e"
+  },
+  {
+    "path": "internal/auth/claude/account_profile.go",
+    "sha256": "b21e6fcffd9797d31b2abe90df66ba76d92bb704e6e43bd8c4de44374610d4d8"
+  },
+  {
+    "path": "internal/auth/claude/anthropic_auth.go",
+    "sha256": "f276b873b50585dc11f188d0f12abdc360b4196c6ef2e8ad3dc240477613d3ee"
+  },
+  {
+    "path": "internal/auth/claude/anthropic.go",
+    "sha256": "4d4a8aa722e6f065360638e159dd843610d9e5000e4029319f98f74481d12886"
+  },
+  {
+    "path": "internal/auth/claude/token.go",
+    "sha256": "9480eae212317e860a4d473d1342962794ed1d435cf2857b143236c8ef9970ae"
+  },
+  {
+    "path": "internal/runtime/executor/claude_account_backfill_test.go",
+    "sha256": "08dbd6ee4ea7d801b5323666389d1fc960c345f285e4b1f82825736e4d143bcc"
+  },
+  {
+    "path": "internal/runtime/executor/claude_executor_auth.go",
+    "sha256": "23db2e83088918a64e6d864e1675709697d7ff612edb9e39903e602110dfe03c"
+  },
+  {
+    "path": "sdk/auth/claude.go",
+    "sha256": "b203db8e4191e17bc9b7cec26193f2bd70daa7818b990ff4a863e5fb1354e246"
+  },
+  {
+    "path": "sdk/cliproxy/auth/account_metadata_test.go",
+    "sha256": "b31f59aeea7009440a2a399af32b47ba9735d3db45c603c4697085e6a2b66766"
+  },
+  {
+    "path": "sdk/cliproxy/auth/account_metadata.go",
+    "sha256": "f5d8788abcf42a8d6c0714379d93e0c76429b5ca99d952901ea3e11c541442ec"
+  },
+  {
+    "path": "sdk/cliproxy/service_lifecycle.go",
+    "sha256": "f6b4d20e8725579bf2b609fc639457a844a16c9ef61a31f36cac4b17b1b9f6a9"
+  }
+]
