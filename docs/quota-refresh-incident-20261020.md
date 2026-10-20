@@ -21,6 +21,12 @@ All times below are UTC on October 20, 2026.
 | 21:32:34 | A separate profile read confirmed HTTP 401 and the revoked-token error. |
 | During diagnosis | A controlled refresh of this exact credential failed with `invalid_grant`. Interactive renewal is required. |
 | 21:37:21 | The revoked credential was set `disabled: true`; `reset-pacer.timer` resumed for healthy credentials. |
+| 21:45:15 | User completed a fresh OAuth authorization; the exact credential saved renewed tokens. |
+| 21:46:32 | Reviewed backend and dashboard deployed; proxy running under PID 1008747. |
+| 21:47:49 | Renewed credential profile returned HTTP 200 and the expected email. |
+| 21:48:19 | Original pinned quota repro returned HTTP 200 using the renewed credential. Weekly usage remained 100%. |
+| 21:48:59 | Temporary isolation removed; credential enabled again. |
+| After deployment | Two natural scheduled polls loaded this credential successfully; priority remained 10 because weekly usage was 100%. |
 
 The logs establish early revocation between 20:10 and 20:15, before the stored expiry of October 21 at 01:54 UTC. They do not identify who or what revoked the tokens. Do not attribute the revocation to T3 or a proxy restart without additional evidence. The proxy process had remained running since October 16.
 
@@ -81,4 +87,27 @@ systemctl --user is-active cliproxy.service
 
 Do not restore old credential files during rollback. OAuth refresh tokens can rotate independently of the deployed binary.
 
-Deployment and final account verification are pending while the user completes the fresh browser authorization. Do not restart the proxy during a pending OAuth flow: its PKCE session is process-local.
+## Final deployed state
+
+The account's authentication and quota refresh are repaired. The deployed dashboard was checked in Chrome: the affected row loads successfully, shows 47% session allowance remaining and 0% overall weekly allowance remaining, and identifies the weekly reset as October 25 at 09:00 America/Toronto. This is a real subscription limit, not a failed quota load. Extra usage was disabled in the successful provider response; no plan or spending setting was changed.
+
+| Artifact or check | Verified value |
+| --- | --- |
+| Backend code commit | `914e9bca`, branch `codex/quota-backoff` |
+| Dashboard code commit | `f5817ac`, branch `codex/claude-quota-backoff` |
+| Deployed backend SHA-256 | `607aed062225bd171eb159a80062767e1d5c2501b583ae95f1ac4f8f85c5817e` |
+| Deployed dashboard SHA-256 | `e6aba2f2e467ab2f5b01d7861032b78dd2205c5e40f46c163ecbef74b1e0a6f0` |
+| Proxy configuration SHA-256, unchanged | `5703a1e074fd9d0fa3693c468268c6e85a409b67107879986d45263f1e2eb866` |
+| Native Codex configuration SHA-256, unchanged during this repair | `718570fffd574aa24dfe5bbe4ed0e76857b656598c8afd4be67af3fa9ed6e7bd` |
+| Native Codex provider | `openai`, direct account; does not point at the shared proxy |
+| Shared inference smoke | HTTP 200 from `claude-haiku-5-5`, exact reply `PROXY_OK` |
+| Deployed coordination fixture | v8 read429, v0 cached429, independent credential200, write200; exactly three fixture upstream calls |
+| Screenshot | `E:/scratch/cliproxy-quota-20261020/repaired-quota.png` |
+
+The fixture ran against the actual deployed management handler and a temporary loopback HTTP server. No credential headers were sent to it and it made no provider calls. The server was stopped after verification.
+
+The proxy intentionally listens at `100.113.156.52:8317`, not loopback port 8317. Verify readiness at the shared address or existing loopback relay `127.0.0.1:8318`. A loopback8317 refusal does not prove the shared service is down.
+
+Do not restart the proxy during a pending OAuth flow: its PKCE session is process-local. The completed renewal was saved before this deployment. Do not rotate working credentials merely to clear a provider wait; this renewal was required because both old tokens were rejected.
+
+The private temporary management-key file retained at the user's request remains unchanged. Cleanup is outside this repair. No machine-specific tunnel, new client route, recurring automation, subscription change or paid service was introduced.
