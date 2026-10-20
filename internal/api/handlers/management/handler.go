@@ -61,6 +61,8 @@ type Handler struct {
 	pluginStoreHTTPClient   pluginstore.HTTPDoer
 	pluginStoreRateLimiter  *pluginstore.GitHubRateLimiter
 	pluginReleases          pluginReleaseCache
+	apiReadBackoff          apiCallReadBackoff
+	apiCallContext          func(context.Context) (context.Context, context.CancelFunc)
 }
 
 type configReloadSnapshot struct {

@@ -4,6 +4,7 @@ User intent: manage connected Claude account identity, subscription details and 
 
 ## Read first
 
+- `docs/quota-refresh-incident-20261020.md` records the later account-specific quota failure, token revocation, retry fixes and deployment state.
 - `docs/account-management.md` owns the data-source and freshness rules.
 - `docs/account-management-deployment.md` owns deployment evidence and the exact rollback.
 - `tools/account_billing/` owns read-only mailbox collection.

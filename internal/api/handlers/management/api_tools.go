@@ -192,7 +192,15 @@ func (h *Handler) APICall(c *gin.Context) {
 		requestBody = strings.NewReader(body.Data)
 	}
 
-	req, errNewRequest := http.NewRequestWithContext(c.Request.Context(), method, urlStr, requestBody)
+	var requestCtx context.Context
+	var cancelRequest context.CancelFunc
+	if h.apiCallContext != nil {
+		requestCtx, cancelRequest = h.apiCallContext(c.Request.Context())
+	} else {
+		requestCtx, cancelRequest = context.WithTimeout(c.Request.Context(), defaultAPICallTimeout)
+	}
+	defer cancelRequest()
+	req, errNewRequest := http.NewRequestWithContext(requestCtx, method, urlStr, requestBody)
 	if errNewRequest != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to build request"})
 		return
@@ -212,7 +220,24 @@ func (h *Handler) APICall(c *gin.Context) {
 	httpClient := &http.Client{
 		Timeout: defaultAPICallTimeout,
 	}
-	httpClient.Transport = h.apiCallTransport(auth, requestProxyURL)
+	transport, proxyRoute := h.apiCallTransportWithProxy(auth, requestProxyURL)
+	httpClient.Transport = transport
+
+	var readResponse *apiCallResponse
+	var readReceivedAt time.Time
+	if method == http.MethodGet || method == http.MethodHead {
+		key := apiCallReadKey(req, body.Data, proxyRoute, authIndex, auth)
+		entry, cached, errAcquire := h.apiReadBackoff.acquire(requestCtx, key)
+		if errAcquire != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "management read unavailable"})
+			return
+		}
+		if cached != nil {
+			c.JSON(http.StatusOK, cached)
+			return
+		}
+		defer func() { h.apiReadBackoff.release(key, entry, readResponse, readReceivedAt) }()
+	}
 
 	resp, errDo := httpClient.Do(req)
 	if errDo != nil {
@@ -220,6 +245,8 @@ func (h *Handler) APICall(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "request failed"})
 		return
 	}
+	readReceivedAt = h.apiReadBackoff.currentTime()
+	readResponse = &apiCallResponse{StatusCode: resp.StatusCode, Header: resp.Header, Body: `{"error":"upstream rate limited"}`}
 	defer func() {
 		if errClose := resp.Body.Close(); errClose != nil {
 			log.Errorf("response body close error: %v", errClose)
@@ -232,11 +259,12 @@ func (h *Handler) APICall(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, apiCallResponse{
+	readResponse = &apiCallResponse{
 		StatusCode: resp.StatusCode,
 		Header:     resp.Header,
 		Body:       string(respBody),
-	})
+	}
+	c.JSON(http.StatusOK, readResponse)
 }
 
 func firstNonEmptyString(values ...*string) string {
@@ -834,11 +862,16 @@ func (h *Handler) authByIndex(authIndex string) *coreauth.Auth {
 }
 
 func (h *Handler) apiCallTransport(auth *coreauth.Auth, requestProxyURL string) http.RoundTripper {
+	transport, _ := h.apiCallTransportWithProxy(auth, requestProxyURL)
+	return transport
+}
+
+func (h *Handler) apiCallTransportWithProxy(auth *coreauth.Auth, requestProxyURL string) (http.RoundTripper, string) {
 	if proxyStr := strings.TrimSpace(requestProxyURL); proxyStr != "" {
 		if transport := buildProxyTransport(proxyStr); transport != nil {
-			return transport
+			return transport, proxyStr
 		}
-		return directAPICallTransport()
+		return directAPICallTransport(), "direct"
 	}
 
 	var proxyCandidates []string
@@ -860,11 +893,11 @@ func (h *Handler) apiCallTransport(auth *coreauth.Auth, requestProxyURL string) 
 
 	for _, proxyStr := range proxyCandidates {
 		if transport := buildProxyTransport(proxyStr); transport != nil {
-			return transport
+			return transport, proxyStr
 		}
 	}
 
-	return directAPICallTransport()
+	return directAPICallTransport(), "direct"
 }
 
 func directAPICallTransport() http.RoundTripper {
